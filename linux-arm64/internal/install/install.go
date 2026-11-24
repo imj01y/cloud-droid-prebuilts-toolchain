@@ -345,7 +345,7 @@ func migrateJDK(ctx context.Context, repo string, root, prior *os.File, archive 
 		return false, nil
 	}
 	var marker unix.Stat_t
-	if err := unix.Fstatat(int(prior.Fd()), "cdh-jdk-trim.txt", &marker, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(err, unix.ENOENT) {
+	if err := fstatAt(int(prior.Fd()), "cdh-jdk-trim.txt", &marker, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(err, unix.ENOENT) {
 		return false, nil
 	}
 	saved := archive
@@ -449,13 +449,13 @@ func clearTemp(parent, root *os.File, name string) {
 		return
 	}
 	if sameChild(parent, root, name) {
-		_ = unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR)
+		_ = unlinkAt(int(parent.Fd()), name, unix.AT_REMOVEDIR)
 	}
 }
 
 func sameChild(parent, child *os.File, name string) bool {
 	var pathStat unix.Stat_t
-	if err := unix.Fstatat(int(parent.Fd()), name, &pathStat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := fstatAt(int(parent.Fd()), name, &pathStat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return false
 	}
 	info, err := child.Stat()
@@ -473,7 +473,7 @@ func makeTemp(root *os.File, prefix string) (*os.File, string, error) {
 			return nil, "", err
 		}
 		name := prefix + hex.EncodeToString(token[:])
-		if err := unix.Mkdirat(int(root.Fd()), name, 0o700); err != nil {
+		if err := mkdirAt(int(root.Fd()), name, 0o700); err != nil {
 			if errors.Is(err, unix.EEXIST) {
 				continue
 			}
@@ -481,12 +481,12 @@ func makeTemp(root *os.File, prefix string) (*os.File, string, error) {
 		}
 		work, err := dirAt(root, name, false, 0o700)
 		if err != nil {
-			_ = unix.Unlinkat(int(root.Fd()), name, unix.AT_REMOVEDIR)
+			_ = unlinkAt(int(root.Fd()), name, unix.AT_REMOVEDIR)
 			return nil, "", err
 		}
 		if err := work.Chmod(0o700); err != nil {
 			work.Close()
-			_ = unix.Unlinkat(int(root.Fd()), name, unix.AT_REMOVEDIR)
+			_ = unlinkAt(int(root.Fd()), name, unix.AT_REMOVEDIR)
 			return nil, "", err
 		}
 		return work, name, nil
@@ -502,7 +502,7 @@ func clearDir(root *os.File) error {
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() {
-			fd, err := unix.Openat(int(root.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			fd, err := openAt(int(root.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 			if err != nil {
 				return err
 			}
@@ -515,12 +515,12 @@ func clearDir(root *os.File) error {
 			if closeErr != nil {
 				return closeErr
 			}
-			if err := unix.Unlinkat(int(root.Fd()), name, unix.AT_REMOVEDIR); err != nil {
+			if err := unlinkAt(int(root.Fd()), name, unix.AT_REMOVEDIR); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := unix.Unlinkat(int(root.Fd()), name, 0); err != nil {
+		if err := unlinkAt(int(root.Fd()), name, 0); err != nil {
 			return err
 		}
 	}
@@ -906,7 +906,7 @@ func openRel(root *os.File, rel string, follow bool) (*os.File, error) {
 			} else {
 				flags |= unix.O_DIRECTORY
 			}
-			fd, openErr := unix.Openat(int(dir.Fd()), name, flags, 0)
+			fd, openErr := openAt(int(dir.Fd()), name, flags, 0)
 			if openErr == nil {
 				fileName := name
 				if final {
@@ -986,7 +986,7 @@ func dupRoot(root *os.File) (*os.File, error) {
 
 func readLink(root *os.File, name string) (string, error) {
 	buffer := make([]byte, 4096)
-	count, err := unix.Readlinkat(int(root.Fd()), name, buffer)
+	count, err := readlinkAt(int(root.Fd()), name, buffer)
 	if err != nil {
 		return "", err
 	}
@@ -1130,7 +1130,7 @@ func parentMode(mode os.FileMode, uid uint32, dev, parentDev uint64) bool {
 }
 
 func dirAt(root *os.File, name string, create bool, mode os.FileMode) (*os.File, error) {
-	return dirAtWith(root, name, create, mode, unix.Mkdirat)
+	return dirAtWith(root, name, create, mode, mkdirAt)
 }
 
 func dirAtWith(
@@ -1141,14 +1141,14 @@ func dirAtWith(
 	mk func(int, string, uint32) error,
 ) (*os.File, error) {
 	flags := unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
-	fd, err := unix.Openat(int(root.Fd()), name, flags, 0)
+	fd, err := openAt(int(root.Fd()), name, flags, 0)
 	if err != nil && create && errors.Is(err, unix.ENOENT) {
 		if err := mk(int(root.Fd()), name, uint32(mode.Perm())); err != nil {
 			return nil, err
 		}
-		fd, err = unix.Openat(int(root.Fd()), name, flags, 0)
+		fd, err = openAt(int(root.Fd()), name, flags, 0)
 		if err == nil {
-			err = unix.Fchmod(fd, uint32(mode.Perm()))
+			err = fchmodFd(fd, uint32(mode.Perm()))
 		}
 	}
 	if err != nil {
@@ -1209,7 +1209,7 @@ func makeDir(root *os.File, rel string) (*os.File, error) {
 		return nil, err
 	}
 	defer parent.Close()
-	if err := unix.Mkdirat(int(parent.Fd()), name, 0o755); err != nil && !errors.Is(err, unix.EEXIST) {
+	if err := mkdirAt(int(parent.Fd()), name, 0o755); err != nil && !errors.Is(err, unix.EEXIST) {
 		return nil, err
 	}
 	dir, err := dirAt(parent, name, false, 0o755)
@@ -1230,7 +1230,7 @@ func newFile(root *os.File, rel string, mode os.FileMode) (*os.File, error) {
 	}
 	defer parent.Close()
 	flags := unix.O_WRONLY | unix.O_CREAT | unix.O_EXCL | unix.O_NOFOLLOW | unix.O_CLOEXEC
-	fd, err := unix.Openat(int(parent.Fd()), name, flags, uint32(mode.Perm()))
+	fd, err := openAt(int(parent.Fd()), name, flags, uint32(mode.Perm()))
 	if err != nil {
 		return nil, err
 	}
@@ -1248,7 +1248,7 @@ func newLink(root *os.File, rel, target string) error {
 		return err
 	}
 	defer parent.Close()
-	return unix.Symlinkat(target, int(parent.Fd()), name)
+	return symlinkAt(target, int(parent.Fd()), name)
 }
 
 func nodeAt(root *os.File, rel string) (fileID, error) {
@@ -1258,7 +1258,7 @@ func nodeAt(root *os.File, rel string) (fileID, error) {
 	}
 	defer parent.Close()
 	var stat unix.Stat_t
-	if err := unix.Fstatat(int(parent.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := fstatAt(int(parent.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return fileID{}, err
 	}
 	return fileID{device: uint64(stat.Dev), inode: uint64(stat.Ino)}, nil

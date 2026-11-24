@@ -13,20 +13,27 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// 原始重命名调用，测试替换它以注入被信号打断的结果。
+var rawRenameat2 = unix.Renameat2
+
 func swapDirs(left, right string) error {
-	return unix.Renameat2(unix.AT_FDCWD, left, unix.AT_FDCWD, right, unix.RENAME_EXCHANGE)
+	return renameAt(unix.AT_FDCWD, left, unix.AT_FDCWD, right, unix.RENAME_EXCHANGE)
 }
 
 func swapAt(root *os.File, left, right string) error {
-	return unix.Renameat2(int(root.Fd()), left, int(root.Fd()), right, unix.RENAME_EXCHANGE)
+	return renameAt(int(root.Fd()), left, int(root.Fd()), right, unix.RENAME_EXCHANGE)
 }
 
 func moveNew(from *os.File, name string, root *os.File) error {
-	return unix.Renameat2(int(from.Fd()), name, int(root.Fd()), name, unix.RENAME_NOREPLACE)
+	return renameAt(int(from.Fd()), name, int(root.Fd()), name, unix.RENAME_NOREPLACE)
 }
 
 func moveAs(root *os.File, from, dest string) error {
-	return unix.Renameat2(int(root.Fd()), from, int(root.Fd()), dest, unix.RENAME_NOREPLACE)
+	return renameAt(int(root.Fd()), from, int(root.Fd()), dest, unix.RENAME_NOREPLACE)
+}
+
+func renameAt(fromFd int, from string, toFd int, to string, flags uint) error {
+	return noIntr(func() error { return rawRenameat2(fromFd, from, toFd, to, flags) })
 }
 
 func fdAlias(file *os.File) string {

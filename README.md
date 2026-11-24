@@ -38,6 +38,8 @@ linux-amd64/
 
 只读组件的身份文件允许普通硬链接及组件内部的相对符号链接。检查固定打开后的真实普通文件，再核对登记大小与SHA-256；程序继续执行原生架构和版本探针。越出组件的链接、非普通文件和内容篡改仍失败，安装发布目标及模块边界文件保持独立校验。
 
+安装器与`rehome/`直接调用的openat、fstatat、mkdirat、unlinkat、readlinkat、fchmod、symlinkat、各宿主重命名及macOS线程目录切换遇到EINTR（系统调用被信号打断）时重试同一调用，与Go标准库`os`包的处理一致；其它错误立即返回。Go运行时的异步抢占信号会让这类调用随机返回EINTR，不重试时`check`曾把它误报为`invalid probe`。
+
 归档以不超过90 MiB的普通Git对象保存，不使用Git LFS。`<host>/bin/cdh-toolchain`负责摘要校验、安全展开、宿主架构检查和逐组件原子发布。主项目把本仓放在`toolchains/`，再把当前宿主工具展开到主仓`output/target/common/toolchains/<host>/`；缺失、版本错误或架构不符都会直接失败，不会改用系统工具。
 
 `toolchain-init`每次都检查旧的`output/toolchains/<host>/`，新安装已经可用时也执行迁移。已登记且核验通过的旧组件以不覆盖重命名迁入缺失的新目录，保留组件inode；两个目录都有组件时，逐路径比较完整条目、类型、权限、属主、链接文字和普通文件字节，只清除完全相同的旧副本。旧目录仍被其它进程使用、存在不同内容、未知条目或路径身份变化时保留对应原件并报告。完整初始化有旧条目残留时返回失败，不把新工具检查通过作为清理完成；指定`--component`的冷启动只处理该组件，保留其它组件供完整初始化迁移。迁移不需要Git元数据。
@@ -125,3 +127,16 @@ Linux可把`host`改为`linux-arm64`或`linux-amd64`。Linux安装程序还提�
 Linux arm64的NDK只提供Android arm64目标输入。该平台使用同目录LLVM 22、NDK sysroot和Clang 21 resource目录，不执行Linux amd64 NDK程序。
 
 各平台的详细版本、限制与手工验证命令见对应目录的`README.md`。迁移设计和验证记录见`docs/plans/2026-09-12-预编译工具链单一主分支设计及实施计划.md`。
+
+## 重新构建安装器
+
+三个`bin/cdh-toolchain`用登记的Go 1.26.8在各自宿主目录构建：静态、去除符号与调试信息、不写入版本控制信息。`$GO_BIN`为登记的Go程序；在主仓中经`tools/build/cwd-go.sh auto -C <宿主目录> build ...`调用时，临时目录绑定到主仓`build/`。
+
+```sh
+(cd darwin-arm64 && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 "$GO_BIN" build -trimpath -buildvcs=false -ldflags="-s -w" -o bin/cdh-toolchain ./cmd/cdh-toolchain)
+codesign -f -s - --pagesize 4096 darwin-arm64/bin/cdh-toolchain
+(cd linux-arm64 && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 "$GO_BIN" build -trimpath -buildvcs=false -ldflags="-s -w" -o bin/cdh-toolchain ./cmd/cdh-toolchain)
+(cd linux-amd64 && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$GO_BIN" build -trimpath -buildvcs=false -ldflags="-s -w" -o bin/cdh-toolchain ./cmd/cdh-toolchain)
+```
+
+macOS程序在构建后以文件名`cdh-toolchain`做ad-hoc签名，并固定4096字节代码页，使签名标识与页哈希可重复。同一源码与Go版本下，这组命令逐字节重现已提交的三个程序。

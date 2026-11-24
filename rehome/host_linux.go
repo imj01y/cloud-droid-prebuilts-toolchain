@@ -15,8 +15,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// 原始重命名调用，测试替换它以注入被信号打断的结果。
+var rawRenameat2 = unix.Renameat2
+
 func renameDir(from, to *os.File, name string) error {
-	return unix.Renameat2(int(from.Fd()), name, int(to.Fd()), name, unix.RENAME_NOREPLACE)
+	return noIntr(func() error {
+		return rawRenameat2(int(from.Fd()), name, int(to.Fd()), name, unix.RENAME_NOREPLACE)
+	})
 }
 
 func busy(ctx context.Context, name string) error {

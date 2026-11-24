@@ -14,20 +14,30 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// 原始重命名调用，测试替换它们以注入被信号打断的结果。
+var (
+	rawRenamexNp   = unix.RenamexNp
+	rawRenameatxNp = unix.RenameatxNp
+)
+
 func swapDirs(left, right string) error {
-	return unix.RenamexNp(left, right, unix.RENAME_SWAP)
+	return noIntr(func() error { return rawRenamexNp(left, right, unix.RENAME_SWAP) })
 }
 
 func swapAt(root *os.File, left, right string) error {
-	return unix.RenameatxNp(int(root.Fd()), left, int(root.Fd()), right, unix.RENAME_SWAP)
+	return renameAt(int(root.Fd()), left, int(root.Fd()), right, unix.RENAME_SWAP)
 }
 
 func moveNew(from *os.File, name string, root *os.File) error {
-	return unix.RenameatxNp(int(from.Fd()), name, int(root.Fd()), name, unix.RENAME_EXCL)
+	return renameAt(int(from.Fd()), name, int(root.Fd()), name, unix.RENAME_EXCL)
 }
 
 func moveAs(root *os.File, from, dest string) error {
-	return unix.RenameatxNp(int(root.Fd()), from, int(root.Fd()), dest, unix.RENAME_EXCL)
+	return renameAt(int(root.Fd()), from, int(root.Fd()), dest, unix.RENAME_EXCL)
+}
+
+func renameAt(fromFd int, from string, toFd int, to string, flag uint32) error {
+	return noIntr(func() error { return rawRenameatxNp(fromFd, from, toFd, to, flag) })
 }
 
 func fdAlias(file *os.File) string {
@@ -67,7 +77,7 @@ func runAt(ctx context.Context, root, program *os.File, rel string, _ bool, args
 	done := make(chan result, 1)
 	go func() {
 		runtime.LockOSThread()
-		if err := unix.PthreadFchdir(int(parent.Fd())); err != nil {
+		if err := noIntr(func() error { return unix.PthreadFchdir(int(parent.Fd())) }); err != nil {
 			runtime.UnlockOSThread()
 			done <- result{err: fmt.Errorf("set probe directory: %w", err)}
 			return
@@ -81,7 +91,7 @@ func runAt(ctx context.Context, root, program *os.File, rel string, _ bool, args
 			cmd.Env = env
 			got.output, got.err = cmd.CombinedOutput()
 		}
-		if err := unix.PthreadFchdir(-1); err != nil {
+		if err := noIntr(func() error { return unix.PthreadFchdir(-1) }); err != nil {
 			got.err = errors.Join(got.err, fmt.Errorf("restore probe directory: %w", err))
 			done <- got
 			return

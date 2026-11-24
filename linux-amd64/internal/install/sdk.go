@@ -51,7 +51,7 @@ func renameSDK(ctx context.Context, root *os.File, archive catalog.Archive) (boo
 		return false, errors.New("both SDK names contain valid installations; preserve both directories")
 	}
 	var saved unix.Stat_t
-	if err := unix.Fstatat(int(root.Fd()), "sdk37-original", &saved, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(err, unix.ENOENT) {
+	if err := fstatAt(int(root.Fd()), "sdk37-original", &saved, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(err, unix.ENOENT) {
 		if err == nil {
 			err = errors.New("SDK backup already exists")
 		}

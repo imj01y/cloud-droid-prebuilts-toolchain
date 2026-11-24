@@ -59,7 +59,7 @@ func Move(ctx context.Context, old, root *os.File, oldPath, dest string,
 			err = errors.New("legacy module boundary changed")
 		}
 		if err == nil {
-			err = unix.Unlinkat(int(old.Fd()), "go.mod", 0)
+			err = unlinkAt(int(old.Fd()), "go.mod", 0)
 		}
 		file.Close()
 		if err != nil {
@@ -132,7 +132,7 @@ func moveOne(ctx context.Context, old, root, prior *os.File, oldPath, dest, name
 	defer stage.Close()
 	defer func() {
 		if sameChild(root, stage, token) {
-			_ = unix.Unlinkat(int(root.Fd()), token, unix.AT_REMOVEDIR)
+			_ = unlinkAt(int(root.Fd()), token, unix.AT_REMOVEDIR)
 		}
 	}()
 	if err := renameDir(old, stage, name); err != nil {
@@ -156,7 +156,7 @@ func moveOne(ctx context.Context, old, root, prior *os.File, oldPath, dest, name
 	if !sameChild(stage, prior, name) {
 		return errors.New("retired component identity changed")
 	}
-	return unix.Unlinkat(int(stage.Fd()), name, unix.AT_REMOVEDIR)
+	return unlinkAt(int(stage.Fd()), name, unix.AT_REMOVEDIR)
 }
 
 func matchPair(old, root, prior *os.File, oldPath, dest, name string) error {
@@ -194,10 +194,10 @@ func equalTree(ctx context.Context, left, right *os.File) error {
 			return fmt.Errorf("different component entry: %s", name)
 		}
 		var a, b unix.Stat_t
-		if err := unix.Fstatat(int(left.Fd()), name, &a, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if err := fstatAt(int(left.Fd()), name, &a, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 			return err
 		}
-		if err := unix.Fstatat(int(right.Fd()), name, &b, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if err := fstatAt(int(right.Fd()), name, &b, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 			return err
 		}
 		if a.Mode != b.Mode || a.Uid != b.Uid || a.Gid != b.Gid {
@@ -280,7 +280,7 @@ func fileSum(ctx context.Context, root *os.File, name string) ([32]byte, error) 
 }
 
 func openFile(root *os.File, name string) (*os.File, error) {
-	fd, err := unix.Openat(int(root.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := openAt(int(root.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +288,7 @@ func openFile(root *os.File, name string) (*os.File, error) {
 }
 
 func openDir(root *os.File, name string) (*os.File, error) {
-	fd, err := unix.Openat(int(root.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := openAt(int(root.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +325,7 @@ func readDir(root *os.File) ([]os.DirEntry, error) {
 
 func linkText(root *os.File, name string) (string, error) {
 	data := make([]byte, 4096)
-	count, err := unix.Readlinkat(int(root.Fd()), name, data)
+	count, err := readlinkAt(int(root.Fd()), name, data)
 	if err != nil || count == len(data) {
 		return "", errors.Join(err, errors.New("cannot read complete link target"))
 	}
@@ -338,7 +338,7 @@ func makeStage(root *os.File) (*os.File, string, error) {
 		return nil, "", err
 	}
 	name := ".cdh-rehome-" + hex.EncodeToString(data[:])
-	if err := unix.Mkdirat(int(root.Fd()), name, 0o755); err != nil {
+	if err := mkdirAt(int(root.Fd()), name, 0o755); err != nil {
 		return nil, "", err
 	}
 	file, err := openDir(root, name)
@@ -352,7 +352,7 @@ func makeStage(root *os.File) (*os.File, string, error) {
 
 func sameChild(parent, child *os.File, name string) bool {
 	var got unix.Stat_t
-	if err := unix.Fstatat(int(parent.Fd()), name, &got, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := fstatAt(int(parent.Fd()), name, &got, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return false
 	}
 	info, err := child.Stat()
@@ -383,7 +383,7 @@ func clearTree(root *os.File) error {
 			}
 			flags = unix.AT_REMOVEDIR
 		}
-		if err := unix.Unlinkat(int(root.Fd()), name, flags); err != nil {
+		if err := unlinkAt(int(root.Fd()), name, flags); err != nil {
 			return err
 		}
 	}
@@ -416,5 +416,5 @@ func removeEmpty(name string, root *os.File) error {
 	if !sameChild(parent, root, base) {
 		return errors.New("legacy directory identity changed before removal")
 	}
-	return unix.Unlinkat(int(parent.Fd()), base, unix.AT_REMOVEDIR)
+	return unlinkAt(int(parent.Fd()), base, unix.AT_REMOVEDIR)
 }
